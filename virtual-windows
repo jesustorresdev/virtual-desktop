@@ -1,0 +1,122 @@
+#!/bin/bash
+# Windows virtual desktop
+
+# Path to the script directory
+SCRIPT_PATH=$(dirname $(realpath -s $0))
+
+# Path to the virtual machine UEFI firmware
+OVMF_PATH="$SCRIPT_PATH/ovmf/OVMF-pure-efi.fd"
+
+# Macvtap interface name
+MACVTAP_IF=macvtap-vd0
+
+# Check root privileges
+
+if [ $(id -u) != 0 ]; then
+  echo "This script requires root permissions."
+  sudo "$0" "$@"
+  exit
+fi
+
+set -e
+
+# Check if the system is using the NVIDIA GPU
+
+if [ "$(prime-select query)" == nvidia ]; then
+  echo "Sorry, but the NVIDIA GPU is in use."
+  echo "Please, switch to the Intel GPU, restart your session and try again."
+  exit
+fi
+
+set +e
+modprobe --dry-run --first-time nvidia || rmmod nvidia &> /dev/null
+if [ $? -ne 0 ]; then
+  echo "Sorry, but the NVIDIA GPU is in use."
+  echo "Please, switch to the Intel GPU, restart your session and try again."
+  exit
+fi
+set -e
+
+# Bind GPU, HDMI audio and an USB Controller
+
+echo "Binding devices..."
+$SCRIPT_PATH/vfio-bind 0000:01:00.0 0000:01:00.1 0000:05:00.0
+echo "done"
+
+# Use macvlan for network interface
+if [ ! -e "/sys/class/net/$MACVTAP_IF" ]; then
+  ip link add link eth0 $MACVTAP_IF type macvtap mode bridge
+fi
+ip link set $MACVTAP_IF up
+
+# Launch Synergy if it is installed
+
+if [ ! -x /usr/bin/synergys ]; then
+  echo -n "Starting Synergy..."
+  su $USER /usr/bin/synergys --daemon --restart
+  trap 'pkill synergys' SIGINT SIGTERM EXIT
+  echo "done"
+fi
+
+# Use PulseAudio
+export QEMU_PA_SAMPLES=128 QEMU_AUDIO_DRV=pa
+#QEMU_ALSA_DAC_BUFFER_SIZE=512 QEMU_ALSA_DAC_PERIOD_SIZE=170 QEMU_AUDIO_DRV=alsa
+
+echo -n "Starting virtual machine..."
+qemu-system-x86_64 \
+  -enable-kvm \
+  -nodefaults \
+  -monitor stdio \
+  -cpu host,kvm=off,hv_time=off \
+  -smp 4,sockets=1,cores=4,threads=1 \
+  -m 4G \
+  -rtc base=localtime \
+  -drive if=pflash,format=raw,readonly,file="$OVMF_PATH" \
+  -vga std \
+  -device vfio-pci,host=05:00.0 \
+  -device virtio-scsi-pci \
+  -drive if=none,id=hd0,format=raw,cache=none,aio=native,file=/dev/mapper/tatooinevg-hoth.rootfs -device scsi-hd,drive=hd0 \
+  -drive if=none,id=cdrom0,format=raw,cache=none,aio=native,file="$HOME/Documentos/isos/Win_Pro_8.1_64BIT_Spanish.ISO" -device scsi-cd,drive=cdrom0 \
+  -drive if=none,id=cdrom1,format=raw,cache=none,aio=native,file="$HOME/Documentos/isos/virtio-win-0.1.110.iso" -device ide-cd,drive=cdrom1,bus=ide.0 \
+  -device intel-hda \
+  -netdev tap,id=net0,fd=5 -device virtio-net-pci,netdev=net0 \
+5<>"/dev/tap$(cat /sys/class/net/$MACVTAP_IF/ifindex)";
+echo "done"
+
+# Switch to standard VGA
+# Remove:
+#  -vga none -nographic \
+#  -device vfio-pci,host=01:00.0 \
+#  -device vfio-pci,host=01:00.1 \
+# Add:
+#  -vga std \
+
+# USB mouse and keyboard passthrough
+#  -device usb-host,vendorid=046d,productid=c245 \
+#  -device usb-host,vendorid=046d,productid=c22a \
+#  -device usb-host,vendorid=046d,productid=c22b \
+
+# USB host controller passthrough
+#  -device vfio-pci,host=05:00.0 \
+# And add "0000:05:00.0" to vfio-bind
+
+# Keep boot options
+#  -drive if=pflash,format=raw,readonly,file="$SCRIPT_PATH/ovmf/OVMF_CODE-pure-efi.fd" \
+#  -drive if=pflash,format=raw,file="$SCRIPT_PATH/ovmf/OVMF_VARS-pure-efi.fd" \
+
+# System install
+# Enable standard VGA, and or change:
+#  -drive if=none,id=cdrom0,format=raw,cache=none,aio=native,file="$HOME/Documentos/isos/Win_Pro_8.1_64BIT_Spanish.ISO" -device scsi-cd,drive=cdrom0 \
+# And add:
+#  -drive if=none,id=cdrom1,format=raw,cache=none,aio=native,file="$HOME/Documentos/isos/virtio-win-0.1.110.iso" -device ide-cd,drive=cdrom1,bus=ide.0 \
+
+# Share "$HOME" folder (doesn't work in Windows)
+#  -fsdev local,id=home,path=$HOME,security_model=none -device virtio-9p-pci,fsdev=home,mount_tag=home
+# Or (SAMBA server must be installed)
+#  -net user,smb=$HOME
+
+# Use Hugepages (better performance)
+#  -mem-path /dev/hugepages \
+
+# Standard user mode network stack interface
+#  -netdev user,id=net0 -device virtio-net-pci,netdev=net0 \
