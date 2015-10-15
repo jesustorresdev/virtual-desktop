@@ -18,34 +18,43 @@ def vfio_bind(device_ids):
     :param device_ids: List of devices to bind to VFIO.
     """
 
-    modprobe_first_time = True
+    modprobe_vfio = True
+
+    devices = {}
     for id in device_ids:
-
-        device_sys_path = '/sys/bus/pci/devices/%s/' % id
-        with open(device_sys_path + 'vendor', 'r') as f:
-            vendor = f.read()
-        with open(device_sys_path + 'device', 'r') as f:
-            device = f.read()
+        device_path = '/sys/bus/pci/devices/%s' % id
         try:
-            driver = os.path.basename(os.readlink(device_sys_path + 'driver'))
+            device_driver = os.path.basename(os.readlink(device_path + '/driver'))
         except OSError:
-            driver = None
+            device_driver = None
 
-        if driver != 'vfio-pci':
+        # Ignore devices already bound to VFIO driver
+        if device_driver != 'vfio-pci':
+            device_info = {
+                'path': device_path,
+                'driver': device_driver
+            }
+            with open(device_path + '/vendor', 'r') as f:
+                device_info['vendor'] = f.read()
+            with open(device_path + '/device', 'r') as f:
+                device_info['model'] = f.read()
+            devices[id] = device_info
+        else:
+            modprobe_vfio = False
 
-            # If necessary, load vfio-pci module
-            if modprobe_first_time:
-                subprocess.check_call(['modprobe', 'vfio-pci'])
-                modprobe_first_time = False
+    # Load vfio-pci module, if needed
+    if modprobe_vfio and devices:
+        subprocess.check_call(['modprobe', 'vfio-pci'])
 
-            # Unbind the device if it is bound to other driver
-            if driver:
-                with open(device_sys_path + 'driver/unbind', 'w') as f:
-                    f.write(id)
+    for id, device_info in devices.iteritems():
+        # Unbind the device if it is bound to other driver
+        if device_info['driver']:
+            with open(device_info['path'] + '/driver/unbind', 'w') as f:
+                f.write(id)
 
-            # Bind the device to VFIO driver
-            with open('/sys/bus/pci/drivers/vfio-pci/new_id', 'w') as f:
-                f.write("%s %s" % (vendor, device))
+        # Bind the device to VFIO driver
+        with open('/sys/bus/pci/drivers/vfio-pci/new_id', 'w') as f:
+            f.write("%s %s" % (device_info['vendor'], device_info['model']))
 
 
 class LibvirtHooks(object):
