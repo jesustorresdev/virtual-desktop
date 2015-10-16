@@ -12,13 +12,14 @@ import libvirt
 import xml.etree.ElementTree as et
 
 
-def vfio_bind(device_ids):
+def vfio_bind_devices(device_ids):
     """Bind the specified devices to the Linux VFIO driver
 
-    :param device_ids: List of devices to bind to VFIO.
+    :param device_ids: List of addresses of devices to bind to VFIO.
+    :return: Dictionary with information about the device bound.
     """
 
-    modprobe_vfio = True
+    vfio_loaded = False
 
     devices = {}
     for id in device_ids:
@@ -28,7 +29,8 @@ def vfio_bind(device_ids):
         except OSError:
             device_driver = None
 
-        # Ignore devices already bound to VFIO driver
+        # Ignore devices already bound to VFIO driver because the system crashes sometimes after
+        # a few bind/unbind cycles
         if device_driver != 'vfio-pci':
             device_info = {
                 'path': device_path,
@@ -40,15 +42,15 @@ def vfio_bind(device_ids):
                 device_info['model'] = f.read()
             devices[id] = device_info
         else:
-            modprobe_vfio = False
+            vfio_loaded = True
 
     # Load vfio-pci module, if needed
-    if modprobe_vfio and devices:
+    if not vfio_loaded and devices:
         subprocess.check_call(['modprobe', 'vfio-pci'])
 
     for id, device_info in devices.iteritems():
         # Unbind the device if it is bound to other driver
-        if device_info['driver']:
+        if device_info['driver'] is not None:
             with open(device_info['path'] + '/driver/unbind', 'w') as f:
                 f.write(id)
 
@@ -56,12 +58,15 @@ def vfio_bind(device_ids):
         with open('/sys/bus/pci/drivers/vfio-pci/new_id', 'w') as f:
             f.write("%s %s" % (device_info['vendor'], device_info['model']))
 
+    return devices
+
 
 class LibvirtHooks(object):
     """Libvirt hook script class
     """
 
-    def run(self, *args):
+    @staticmethod
+    def run(*args):
         """Dispatch the request to the proper method, if it exist
 
         :param hook_script: Hook script name (e.g. daemon, qemu, lxc or network).
@@ -83,7 +88,7 @@ class LibvirtHooks(object):
         if item_name != '-':
             try:
                 method_name = "do_%s_%s_%s" % (hook_script, item_name, action)
-                method_to_call = getattr(self, method_name)
+                method_to_call = getattr(LibvirtHooks, method_name)
             except AttributeError:
                 pass
             else:
@@ -93,27 +98,40 @@ class LibvirtHooks(object):
         # If the previous attempt fail, try to call self.do_script_action(item_name, subaction, extraarg)
         try:
             method_name = "do_%s_%s" % (hook_script, action)
-            method_to_call = getattr(self, method_name)
+            method_to_call = getattr(LibvirtHooks, method_name)
         except AttributeError:
             pass
         else:
             method_to_call(item_name, *args[3:5])
 
-    def do_qemu_hoth_prepare(self, subaction, extrarg):
-        """Prepare the start of Hoth, a Qemu virtual machine
+    @staticmethod
+    def do_qemu_hoth_prepare(subaction, extrarg):
+        """Prepare the start of 'hoth', a Qemu virtual desktop
         """
 
         xml = et.parse(sys.stdin)
 
         # Get PCI devices to passthrough
         device_ids = []
-        for address in xml.findall("devices/hostdev[@type='pci']/source/address"):
-            attribs = dict([(k, int(v, 16)) for k, v in address.attrib.iteritems()])
-            device_ids.append('{domain:04x}:{bus:02x}:{slot:02x}.{function:x}'.format(**attribs))
+        for address_element in xml.findall("devices/hostdev[@type='pci']/source/address"):
+            address_attrib = dict([(k, int(v, 16)) for k, v in address_element.attrib.iteritems()])
+            device_ids.append('{domain:04x}:{bus:02x}:{slot:02x}.{function:x}'.format(**address_attrib))
 
         # Bind those devices to VFIO driver
         if device_ids:
-            vfio_bind(device_ids)
+            devices_bound = vfio_bind_devices(device_ids)
+
+            # Unload the NVIDIA driver before unbind.
+
+            # Hotplug support of graphics card isn't good. Further, I guess that question 9 applies here:
+            # http://vfio.blogspot.com.es/2014/08/vfiovga-faq.html
+            # The driver locks the VGA arbiter, freezing the VM on its first access to VGA resources.
+
+            # That shouldn't happen but...
+            # https://bbs.archlinux.org/viewtopic.php?pid=1508940#p1508940
+            for device in devices_bound.itervalues():
+                if device['driver'] == 'nvidia':
+                    subprocess.check_call(['rmmod', 'nvidia'])
 
         # Get the libvirt networks where the VM is connected
         networks = []
@@ -130,5 +148,4 @@ class LibvirtHooks(object):
 
 
 if __name__ == "__main__":
-    libvirt_hook = LibvirtHooks()
-    libvirt_hook.run(*sys.argv)
+    LibvirtHooks.run(*sys.argv)
