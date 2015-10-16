@@ -20,6 +20,7 @@ def vfio_bind_devices(device_ids):
     """
 
     vfio_loaded = False
+    nvidia_loaded = True
 
     devices = {}
     for id in device_ids:
@@ -51,8 +52,22 @@ def vfio_bind_devices(device_ids):
     for id, device_info in devices.iteritems():
         # Unbind the device if it is bound to other driver
         if device_info['driver'] is not None:
-            with open(device_info['path'] + '/driver/unbind', 'w') as f:
-                f.write(id)
+
+            # Unload the NVIDIA driver instead of unbind the device
+            if device_info['driver'] == 'nvidia':
+
+                # Hotplug support of graphics card isn't good. Further, I guess that question 9 applies here:
+                # http://vfio.blogspot.com.es/2014/08/vfiovga-faq.html
+                # The driver locks the VGA arbiter, freezing the VM on its first access to VGA resources.
+
+                # That shouldn't happen but...
+                # https://bbs.archlinux.org/viewtopic.php?pid=1508940#p1508940
+                if nvidia_loaded:
+                    subprocess.check_call(['rmmod', 'nvidia'])
+                    nvidia_loaded = False
+            else:
+                with open(device_info['path'] + '/driver/unbind', 'w') as f:
+                    f.write(id)
 
         # Bind the device to VFIO driver
         with open('/sys/bus/pci/drivers/vfio-pci/new_id', 'w') as f:
@@ -119,19 +134,7 @@ class LibvirtHooks(object):
 
         # Bind those devices to VFIO driver
         if device_ids:
-            devices_bound = vfio_bind_devices(device_ids)
-
-            # Unload the NVIDIA driver before unbind.
-
-            # Hotplug support of graphics card isn't good. Further, I guess that question 9 applies here:
-            # http://vfio.blogspot.com.es/2014/08/vfiovga-faq.html
-            # The driver locks the VGA arbiter, freezing the VM on its first access to VGA resources.
-
-            # That shouldn't happen but...
-            # https://bbs.archlinux.org/viewtopic.php?pid=1508940#p1508940
-            for device in devices_bound.itervalues():
-                if device['driver'] == 'nvidia':
-                    subprocess.check_call(['rmmod', 'nvidia'])
+            vfio_bind_devices(device_ids)
 
         # Get the libvirt networks where the VM is connected
         networks = []
