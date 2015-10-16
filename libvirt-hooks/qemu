@@ -3,7 +3,10 @@
 """ Libvirt hook script to setup the system before launch a virtual desktop
 """
 
-__author__ = 'Jesús Torres <jmtorres@ull.es>'
+__author__ = 'Jesús Torres'
+__copyright__ = "Copyright 2015 Jesús Torres <jmtorres@ull.es>"
+__license__ = "BSD"
+__contact__ = "<jmtorres@ull.es>"
 
 import os
 import sys
