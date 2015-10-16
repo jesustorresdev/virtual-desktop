@@ -1,50 +1,28 @@
 #!/bin/bash
-# Windows virtual desktop
-
-# Path to the script directory
-SCRIPT_PATH=$(dirname $(realpath -s $0))
+# My Windows virtual desktop launch script
 
 set -e
 
 # Check if the system is using the NVIDIA GPU
 
 if [ "$(prime-select query)" == nvidia ]; then
-  echo "Sorry, but the NVIDIA GPU is in use."
-  echo "Please, switch to the Intel GPU, restart your session and try again."
-  exit
-fi
-
-if lsmod | cut -d' ' -f1 | grep -q nvidia; then
-  set +e
-  sudo rmmod nvidia &> /dev/null
-  set -e
-  if [ $? -ne 0 ]; then
     echo "Sorry, but the NVIDIA GPU is in use."
     echo "Please, switch to the Intel GPU, restart your session and try again."
     exit
-  fi
 fi
 
-# Bind GPU, HDMI audio and an USB Controller
+# Here we go...
 
-echo "Binding devices..."
-sudo $SCRIPT_PATH/vfio-bind 0000:01:00.0 0000:01:00.1 0000:05:00.0
-echo "done"
-
-# Configure networks
-
-if virsh net-list --inactive | grep -q isolated; then
-  echo "Starting host-guest private network..."
-  virsh net-start isolated
-fi
+echo -n "Starting virtual machine... "
+virsh start hoth
 
 # Launch Synergy if it is installed
 
-if [ -x /usr/bin/synergys ]; then
-  echo -n "Starting Synergy..."
-  /usr/bin/synergys --daemon --restart --config "$SCRIPT_PATH/conf/synergy.conf"
-  echo "done"
+if [ -x /usr/bin/synergy ]; then
+    if ! ps --no-headers -C synergy; then
+        echo -n "Starting Synergy... "
+        /usr/bin/synergy &> /dev/null &
+        disown
+        echo "Look at the system tray!"
+    fi
 fi
-
-echo "Starting virtual machine..."
-virsh start hoth
