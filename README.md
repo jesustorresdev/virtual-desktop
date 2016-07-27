@@ -3,10 +3,12 @@ Copyright 2015-2016 Jesús Torres <jmtorres@ull.es>
 
 ## Installation
 
- 1. Copy scritp
- 2. Copy hook
- 3. Copy configuration
- 4. Copy sysctl.d
+Run these commands in a terminal:
+
+~~~
+sudo install -m755 scripts/start-virtual-desktop /usr/local/bin
+sudo install -m755 libvirt-hooks/qemu /etc/libvirt/hooks
+~~~
 
 ## Add a desktop shortcut
 
