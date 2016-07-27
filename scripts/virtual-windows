@@ -1,7 +1,47 @@
 #!/bin/bash
 # My Windows virtual desktop launch script
 
+VIR_DOMAIN="default"
+PROGRAM_NAME=$(basename $0)
+
 set -e
+
+error_exit()
+{
+    # Display a error message (1) and exit
+    echo -e "${PROGRAM_NAME}: ${1:-"Error desconocido"}" 1>&2
+    exit 1
+}
+
+usage()
+{
+    cat <<EOF
+Usage: ${PROGRAM_NAME} [OPTION]...
+Launch a Windows virtual desktop.
+
+  -d, --desktop            virtual machine name
+      --help               display this help and exit
+EOF
+}
+
+# Parse command line options
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        -d | --desktop )
+            VIR_DOMAIN="$2"
+            shift
+            ;;
+        --help )
+            usage
+            exit 0
+            ;;
+        *)
+            error_exit "unknown option '$1'.\n$(usage)"
+            ;;
+    esac
+    shift
+done
 
 # Check if the system is using the NVIDIA GPU
 
@@ -13,16 +53,16 @@ fi
 
 # Here we go...
 
-echo -n "Starting virtual machine... "
-virsh start hoth
+echo -n "Starting '${VIR_DOMAIN}' virtual machine... "
+virsh start "${VIR_DOMAIN}"
 
-# Launch Synergy if it is installed
+# Launch Synergy, if it is installed
 
 if [ -x /usr/bin/synergy ]; then
-    if ! ps --no-headers -C synergy; then
+    if ! ps --no-headers -C synergy,synergys,synergyd,synergyc &> /dev/null; then
         echo -n "Starting Synergy... "
-        /usr/bin/synergy &> /dev/null &
-        disown
+        nohup /usr/bin/synergy &> /dev/null &
+        sleep 1
         echo "Look at the system tray!"
     fi
 fi
