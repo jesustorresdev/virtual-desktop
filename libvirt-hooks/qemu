@@ -7,10 +7,10 @@ import os
 import sys
 import subprocess
 import libvirt
-import xml
+import xml.etree.ElementTree
 
 __author__ = 'Jesús Torres'
-__copyright__ = "Copyright 2015 Jesús Torres <jmtorres@ull.es>"
+__copyright__ = "Copyright 2015-2016 Jesús Torres <jmtorres@ull.es>"
 __license__ = "BSD"
 __contact__ = "<jmtorres@ull.es>"
 
@@ -66,6 +66,8 @@ def vfio_bind_devices(device_ids):
                 # That shouldn't happen but...
                 # https://bbs.archlinux.org/viewtopic.php?pid=1508940#p1508940
                 if nvidia_loaded:
+                    subprocess.call(['rmmod', 'nvidia_modeset'])
+                    subprocess.call(['rmmod', 'nvidia_uvm'])
                     subprocess.check_call(['rmmod', 'nvidia'])
                     nvidia_loaded = False
             else:
@@ -87,17 +89,19 @@ class LibvirtHooks(object):
     def run(hook_script, item_name, action, subaction, extraarg):
         """Dispatch the request to the proper method, if it exist
 
-        :param hook_script: Hook script name (e.g. daemon, qemu, lxc or network).
+        :param hook_script: Hook script path (e.g. /etc/libvirt/hooks/qemu)
         :param item_name: Guest or network name.
         :param action: Why the hook script was invoked.
         :param subaction: Specific sub-action inside the action.
         :param extraarg: Action-specific extra argument.
         """
 
+        script_name = os.path.basename(hook_script)
+
         # First, try to call self.do_script_name_action(subaction, extraarg)
         if item_name != '-':
             try:
-                method_name = "do_%s_%s_%s" % (hook_script, item_name, action)
+                method_name = "do_%s_%s_%s" % (script_name, item_name, action)
                 method_to_call = getattr(LibvirtHooks, method_name)
             except AttributeError:
                 pass
@@ -107,7 +111,7 @@ class LibvirtHooks(object):
 
         # If the previous attempt fail, try to call self.do_script_action(item_name, subaction, extraarg)
         try:
-            method_name = "do_%s_%s" % (hook_script, action)
+            method_name = "do_%s_%s" % (script_name, action)
             method_to_call = getattr(LibvirtHooks, method_name)
         except AttributeError:
             pass

@@ -1,8 +1,0 @@
-[Desktop Entry]
-Name=Virtual Windows
-Comment=Windows virtual desktop
-Exec=$SHELL -c "virtual-windows || exec $SHELL"
-Icon=virt-manager
-Terminal=true
-Type=Application
-Categories=System;

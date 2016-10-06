@@ -1,10 +1,8 @@
-#!/bin/bash
+#!/bin/bash -e
 # My Windows virtual desktop launch script
 
 VIR_DOMAIN="default"
 PROGRAM_NAME=$(basename $0)
-
-set -e
 
 error_exit()
 {
