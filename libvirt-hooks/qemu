@@ -66,6 +66,7 @@ def vfio_bind_devices(device_ids):
                 # That shouldn't happen but...
                 # https://bbs.archlinux.org/viewtopic.php?pid=1508940#p1508940
                 if nvidia_loaded:
+                    subprocess.call(['rmmod', 'nvidia_drm'])
                     subprocess.call(['rmmod', 'nvidia_modeset'])
                     subprocess.call(['rmmod', 'nvidia_uvm'])
                     subprocess.check_call(['rmmod', 'nvidia'])
