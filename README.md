@@ -5,7 +5,7 @@ Copyright 2015-2016 Jesús Torres <jmtorres@ull.es>
 
 Run these commands in a terminal:
 
-~~~
+~~~.sh
 sudo install -m755 scripts/start-virtual-desktop /usr/local/bin
 sudo install -m755 libvirt-hooks/qemu /etc/libvirt/hooks
 ~~~
@@ -13,7 +13,7 @@ sudo install -m755 libvirt-hooks/qemu /etc/libvirt/hooks
 ## Add a desktop shortcut
 
 Create a desktop file (e.g. virtual-desktop.desktop) with the following content and put it in your desktop folder
-or in ~/.local/share/applications, if you want to add it as a desktop menu entry.
+or in `~/.local/share/applications`, if you want to add it as a desktop menu entry.
 
 ~~~
 [Desktop Entry]
