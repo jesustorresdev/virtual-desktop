@@ -2,7 +2,6 @@
 # -*- coding: utf-8 -*-
 """ Libvirt hook script to setup the system before launch a virtual desktop
 """
-
 import os
 import sys
 import subprocess
@@ -10,9 +9,16 @@ import libvirt
 import xml.etree.ElementTree
 
 __author__ = 'Jesús Torres'
-__copyright__ = "Copyright 2015-2016 Jesús Torres <jmtorres@ull.es>"
+__copyright__ = "Copyright 2015-2019 Jesús Torres <jmtorres@ull.es>"
 __license__ = "BSD"
 __contact__ = "<jmtorres@ull.es>"
+
+
+def format_device_id(**address):
+    """Get the device id string from device address fields: domain, bus, slot and function
+    """
+    address = {field: value if isinstance(value, int) else int(value, 16) for field, value in address.iteritems()}
+    return '{domain:04x}:{bus:02x}:{slot:02x}.{function:x}'.format(**address)
 
 
 def vfio_bind_devices(device_ids):
@@ -82,73 +88,86 @@ def vfio_bind_devices(device_ids):
     return devices
 
 
-class LibvirtHooks(object):
+class LibvirtHook(object):
     """Libvirt hook script class
+    
+    :param object_name: Name of the object (guest, network, etc.) involved in the operation or None
+    :param operation: Operation being performed on the object.
+    :param sub_operation: Specific sub-operation inside the operation or None.
+    :param extra_argument: Operation-specific extra argument or None.
     """
+    LIBVIRT_CONNECTION_URI = 'qemu:///system'
 
-    @staticmethod
-    def run(hook_script, item_name, action, subaction, extraarg):
-        """Dispatch the request to the proper method, if it exist
+    def __init__(self, object_name, operation, sub_operation, extra_argument):
+        self.object_name = None if object_name == '-' else object_name
+        self.operation = operation
+        self.sub_operation = None if sub_operation == '-' else sub_operation
+        self.extra_argument = None if extra_argument == '-' else extra_argument
 
-        :param hook_script: Hook script path (e.g. /etc/libvirt/hooks/qemu)
-        :param item_name: Guest or network name.
-        :param action: Why the hook script was invoked.
-        :param subaction: Specific sub-action inside the action.
-        :param extraarg: Action-specific extra argument.
+        self._object_description = None
+        self._virt_connection = None
+
+    @property
+    def object_description(self):
+        """xml.etree.ElementTree with the full XML description for the object.
         """
+        if self._object_description is None:
+            self._object_description = xml.etree.ElementTree.parse(sys.stdin)
+        return self._object_description
 
-        script_name = os.path.basename(hook_script)
-
-        # First, try to call self.do_script_name_action(subaction, extraarg)
-        if item_name != '-':
-            try:
-                method_name = "do_%s_%s_%s" % (script_name, item_name, action)
-                method_to_call = getattr(LibvirtHooks, method_name)
-            except AttributeError:
-                pass
-            else:
-                method_to_call(subaction, extraarg)
-                return
-
-        # If the previous attempt fail, try to call self.do_script_action(item_name, subaction, extraarg)
-        try:
-            method_name = "do_%s_%s" % (script_name, action)
-            method_to_call = getattr(LibvirtHooks, method_name)
-        except AttributeError:
-            pass
-        else:
-            method_to_call(item_name, subaction, extraarg)
-
-    @staticmethod
-    def do_qemu_hoth_prepare(subaction, extrarg):
-        """Prepare the start of 'hoth', a Qemu virtual desktop
+    @property
+    def virt_connection(self):
+        """Connection to the libvirt daemon.
         """
+        if self._virt_connection is None:
+            self._virt_connection = libvirt.open(self.LIBVIRT_CONNECTION_URI)
+            if self._virt_connection is None:
+                raise RuntimeError("Failed to open connection to '{}'".format(self.LIBVIRT_CONNECTION_URI))
+        return self._virt_connection
 
-        element_tree = xml.etree.ElementTree.parse(sys.stdin)
+    def run(self):
+        """Dispatch the request to the proper method according to 'object_name' and 'operation'.
 
-        # Get PCI devices to passthrough
-        device_ids = []
-        for address_element in element_tree.findall("devices/hostdev[@type='pci']/source/address"):
-            address_attrib = dict([(k, int(v, 16)) for k, v in address_element.attrib.iteritems()])
-            device_ids.append('{domain:04x}:{bus:02x}:{slot:02x}.{function:x}'.format(**address_attrib))
+        First, it tries to invoque on_{object_name}_{operation}() method. If that fails, it tries to invoque
+        on_{operation}() method.
+        """
+        method_to_call = None
 
-        # Bind those devices to VFIO driver
-        if device_ids:
-            vfio_bind_devices(device_ids)
+        if self.object_name is not None:
+            method_name = "on_{}_{}".format(self.object_name, self.operation)
+            method_to_call = getattr(self, method_name, None)
 
-        # Get the libvirt networks where the VM is connected
-        networks = []
-        for source in element_tree.findall("devices/interface[@type='network']/source"):
-            networks.append(source.get('network'))
+        if method_to_call is None:
+            method_name = "on_{}".format(self.operation)
+            method_to_call = getattr(self, method_name, None)
 
-        # Start those networks
-        if networks:
-            libvirt_conn = libvirt.open('qemu:///system')
-            for name in networks:
-                network = libvirt_conn.networkLookupByName(name)
-                if not network.isActive():
-                    network.create()
+        if method_to_call is not None:
+            return method_to_call()
+
+    #
+    # Hook methods
+    #
+
+    def on_hoth_prepare(self):
+        """Hook method to 'prepare' the start of a VM named 'hoth'
+        """
+        # Bind the PCI devices to passthrough to VFIO driver
+        device_ids = [
+            format_device_id(**address.attrib)
+            for address in self.object_description.findall("devices/hostdev[@type='pci']/source/address")
+        ]
+        vfio_bind_devices(device_ids)
+
+        # Start all the networks where the VM will be connected
+        network_names = [
+            source.get('network')
+            for source in self.object_description.findall("devices/interface[@type='network']/source")
+        ]
+        for network_name in network_names:
+            network = self.virt_connection.networkLookupByName(network_name)
+            if network and not network.isActive():
+                network.create()
 
 
 if __name__ == "__main__":
-    LibvirtHooks.run(*sys.argv)
+    LibvirtHook(*sys.argv[1:]).run()
